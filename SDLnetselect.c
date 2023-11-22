@@ -21,6 +21,9 @@
 
 #include "SDLnetsys.h"
 #include "SDL_net.h"
+#ifdef __linux__
+#include <poll.h>
+#endif
 
 /* The select() API for network sockets */
 
@@ -107,47 +110,78 @@ int SDLNet_DelSocket(SDLNet_SocketSet set, SDLNet_GenericSocket sock)
 */
 int SDLNet_CheckSockets(SDLNet_SocketSet set, Uint32 timeout)
 {
+#ifdef __linux__
     int i;
-    SOCKET maxfd;
     int retval;
-    struct timeval tv;
     fd_set mask;
 
-    /* Find the largest file descriptor */
-    maxfd = 0;
+	struct pollfd fds[set->numsockets];
     for ( i=set->numsockets-1; i>=0; --i ) {
-        if ( set->sockets[i]->channel > maxfd ) {
-            maxfd = set->sockets[i]->channel;
-        }
+		fds[i].events = POLLIN;
+		fds[i].revents = 0;
+		fds[i].fd = set->sockets[i]->channel;
     }
 
     /* Check the file descriptors for available data */
     do {
         SDLNet_SetLastError(0);
 
-        /* Set up the mask of file descriptors */
-        FD_ZERO(&mask);
-        for ( i=set->numsockets-1; i>=0; --i ) {
-            FD_SET(set->sockets[i]->channel, &mask);
-        }
-
-        /* Set up the timeout */
-        tv.tv_sec = timeout/1000;
-        tv.tv_usec = (timeout%1000)*1000;
-
         /* Look! */
-        retval = select(maxfd+1, &mask, NULL, NULL, &tv);
+		retval = poll(fds, set->numsockets, timeout);
     } while ( SDLNet_GetLastError() == EINTR );
 
     /* Mark all file descriptors ready that have data available */
     if ( retval > 0 ) {
         for ( i=set->numsockets-1; i>=0; --i ) {
-            if ( FD_ISSET(set->sockets[i]->channel, &mask) ) {
+			if ( fds[i].revents & POLLIN) {
                 set->sockets[i]->ready = 1;
             }
         }
     }
     return(retval);
+#else
+	int i;
+	SOCKET maxfd;
+	int retval;
+	struct timeval tv;
+	fd_set mask;
+
+	/* Find the largest file descriptor */
+	maxfd = 0;
+	for ( i=set->numsockets-1; i>=0; --i ) {
+		if ( set->sockets[i]->channel > maxfd ) {
+			maxfd = set->sockets[i]->channel;
+		}
+	}
+
+	/* Check the file descriptors for available data */
+	do {
+		SDLNet_SetLastError(0);
+
+		/* Set up the mask of file descriptors */
+		FD_ZERO(&mask);
+		for ( i=set->numsockets-1; i>=0; --i ) {
+			FD_SET(set->sockets[i]->channel, &mask);
+		}
+
+		/* Set up the timeout */
+		tv.tv_sec = timeout/1000;
+		tv.tv_usec = (timeout%1000)*1000;
+
+		/* Look! */
+		retval = select(maxfd+1, &mask, NULL, NULL, &tv);
+	} while ( SDLNet_GetLastError() == EINTR );
+
+	/* Mark all file descriptors ready that have data available */
+	if ( retval > 0 ) {
+		for ( i=set->numsockets-1; i>=0; --i ) {
+			if ( FD_ISSET(set->sockets[i]->channel, &mask) ) {
+				set->sockets[i]->ready = 1;
+			}
+		}
+	}
+	return(retval);
+#endif
 }
 
 /* Free a set of sockets allocated by SDL_NetAllocSocketSet() */
